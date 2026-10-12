@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>RO-style</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <h1>RO-style</h1>
+      <p>Describe a look and get matching items from the Roblox catalog.</p>
+    </header>
+
+    <form id="style-form" class="panel" novalidate>
+      <label class="field-label" for="description">Style description</label>
+      <textarea id="description" rows="3" maxlength="500"
+                placeholder="e.g. emo kid with dark clothes and headphones"></textarea>
+
+      <div class="controls">
+        <label class="toggle">
+          <input type="checkbox" id="limit-price"> Limit price
+        </label>
+        <label class="max-price" id="max-price-field" hidden>
+          Max R$
+          <input type="number" id="max-price" min="0" step="1" inputmode="numeric" value="100" disabled>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="free-only"> Free items only
+        </label>
+      </div>
+
+      <button type="submit" id="generate" class="primary">Generate outfit</button>
+      <p id="message" class="message" role="alert" hidden></p>
+    </form>
+
+    <p id="loading" class="loading" role="status" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Styling your outfit… this can take up to a minute.</span>
+      <span id="loading-seconds" class="loading-seconds" aria-hidden="true"></span>
+    </p>
+
+    <section id="results" class="results" aria-labelledby="results-heading" hidden>
+      <div class="results-bar">
+        <h2 id="results-heading" tabindex="-1">Your outfit</h2>
+        <button type="button" id="copy-links" class="secondary">Copy all links</button>
+      </div>
+      <p id="results-note" class="note" hidden>No items matched. Try other words or loosen the price filter.</p>
+      <div id="slots" class="slots"></div>
+    </section>
+  </main>
+</body>
+</html>
