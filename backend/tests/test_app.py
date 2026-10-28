@@ -51,11 +51,40 @@ def test_generate_reports_a_catalog_outage_as_502(monkeypatch):
     assert client.post("/generate", json={"description": "emo"}).status_code == 502
 
 
+def test_create_outfit_passes_the_request_to_the_stylist(monkeypatch):
+    calls = []
+
+    async def create_outfit(description, **filters):
+        calls.append((description, filters))
+        return OUTFIT
+
+    monkeypatch.setattr(stylist, "create_outfit", create_outfit)
+
+    response = client.post(
+        "/create-outfit",
+        json={"description": "  emo  ", "price_filter_enabled": True, "max_price": 50, "free_only": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"slots": OUTFIT}
+    assert calls == [("emo", {"price_filter": True, "max_price": 50, "free_only": False})]
+
+
+def test_create_outfit_reports_a_catalog_outage_as_502(monkeypatch):
+    async def create_outfit(description, **filters):
+        raise roblox_client.RobloxAPIError("the catalog search failed for every slot")
+
+    monkeypatch.setattr(stylist, "create_outfit", create_outfit)
+
+    assert client.post("/create-outfit", json={"description": "emo"}).status_code == 502
+
+
 def test_the_frontend_is_served_at_the_root():
     page = client.get("/")
 
     assert page.status_code == 200
     assert "Generate outfit" in page.text
+    assert "Create outfit" in page.text
     assert client.get("/app.js").status_code == 200
     assert client.get("/style.css").status_code == 200
 

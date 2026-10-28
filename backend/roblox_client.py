@@ -118,8 +118,13 @@ async def search_slot(
         if detail is None:  # moderated or deleted since it was indexed
             continue
         price, off_sale = _catalog_price(detail)
-        if item_type == "Bundle":
-            # Catalog details is also enrich_items' exact-price source for bundles; spare it the call.
+        # Catalog details already carries a current price (lowestPrice counts resale
+        # listings), so cache the determinate ones as enrich_items' exact-price source
+        # and spare the per-item follow-up call: the per-asset economy fan-out in
+        # _exact_prices, and the repeat catalog call for bundles. Only a fully unknown
+        # (None, None) result is left uncached, to fall through to economy details,
+        # which can still resolve some assets.
+        if price is not None or off_sale is True:
             _price_cache.set((item_type, item_id), (price, off_sale))
         items.append({"id": item_id, "name": detail.get("name"), "price": price, "item_type": item_type})
     if price_cap is not None:

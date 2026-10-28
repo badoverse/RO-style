@@ -91,6 +91,25 @@ async def generate(request: GenerateRequest) -> dict:
     return {"slots": slots}
 
 
+@app.post("/create-outfit", response_model=GenerateResponse)
+async def create_outfit(request: GenerateRequest) -> dict:
+    """Assemble one cohesive look with a vision model that actually looks at item thumbnails.
+
+    Returns one chosen item per slot. If the vision model is unavailable, each slot falls
+    back to the catalog's top result, so generation still works.
+    """
+    try:
+        slots = await stylist.create_outfit(
+            request.description,
+            price_filter=request.price_filter_enabled,
+            max_price=request.max_price,
+            free_only=request.free_only,
+        )
+    except roblox_client.RobloxAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"slots": slots}
+
+
 @app.get("/test-search")
 async def test_search(
     keyword: str,

@@ -107,18 +107,18 @@ async def test_rank_prompt_holds_only_numbered_names_and_prices(fake_llm):
 
     assert [pick["id"] for pick in picks] == [3, 91519387140359]
     [system, user] = fake_llm.calls[0]["messages"]
-    assert "pick the 3 best matches" in system["content"]
+    assert f"pick the {stylist.PICKS_PER_SLOT} best matches" in system["content"]
     assert "Slot: Shirt\nCandidates (id | name | price R$):\n" in user["content"]
     assert "1 | Black / Hoodie (emo) | 65\n2 | Grey Tee | ?\n3 | Free Cap | 0\n" in user["content"]
     assert "91519387140359" not in user["content"]
 
 
-async def test_rank_drops_unknown_and_repeated_ids_and_keeps_three(fake_llm):
+async def test_rank_drops_unknown_and_repeated_ids_and_caps_at_n(fake_llm):
     fake_llm.replies = ['[5, 99, 5, "2", {"id": 1}, 3]']
 
-    picks = await stylist.rank_candidates("emo", "Hat", [item(i) for i in range(1, 6)])
+    picks = await stylist.rank_candidates("emo", "Hat", [item(i) for i in range(1, 6)], n=3)
 
-    assert [pick["id"] for pick in picks] == [5, 2, 1]
+    assert [pick["id"] for pick in picks] == [5, 2, 1]  # 99 out of range, repeat 5 dropped, capped to 3
 
 
 async def test_rank_may_pick_nothing(fake_llm):
@@ -132,7 +132,7 @@ async def test_rank_falls_back_to_catalog_order(fake_llm):
 
     picks = await stylist.rank_candidates("emo", "Hat", [item(i) for i in range(1, 6)])
 
-    assert [pick["id"] for pick in picks] == [1, 2, 3]
+    assert [pick["id"] for pick in picks] == [1, 2, 3, 4, 5]  # catalog order, up to PICKS_PER_SLOT
 
 
 async def test_rank_sends_at_most_100_candidates(fake_llm):
@@ -193,7 +193,7 @@ async def test_without_an_llm_default_slots_get_top_catalog_results(fake_llm, ca
     slots = await stylist.generate_outfit("goth")
 
     assert [slot["slot"] for slot in slots] == ["Hat", "Hair", "Shirt", "Pants"]
-    assert all([entry["id"] for entry in slot["items"]] == [1, 2, 3] for slot in slots)
+    assert all([entry["id"] for entry in slot["items"]] == [1, 2, 3, 4, 5] for slot in slots)
 
 
 async def test_a_failed_search_only_empties_its_own_slot(fake_llm, catalog):
@@ -212,3 +212,90 @@ async def test_fails_when_every_search_fails(fake_llm, catalog):
 
     with pytest.raises(roblox_client.RobloxAPIError):
         await stylist.generate_outfit("emo")
+
+
+def answer_vision(plan, picks):
+    """A FakeLLM responder: the plan for prompt 1, picks (a dict/list) for the vision call.
+
+    The vision call's user content is a list of parts, not a string.
+    """
+
+    def respond(messages):
+        user = messages[1]["content"]
+        if isinstance(user, str) and user.startswith("Style description"):
+            return json.dumps(plan)
+        return json.dumps(picks) if not isinstance(picks, str) else picks
+
+    return respond
+
+
+async def test_create_outfit_picks_one_image_per_slot(fake_llm, catalog):
+    plan = [
+        {"slot": "Hat", "keyword": "beanie", "category": "Accessories", "subcategory": "Hats"},
+        {"slot": "Shirt", "keyword": "hoodie", "category": "Clothing", "subcategory": "Shirt"},
+    ]
+    fake_llm.respond = answer_vision(plan, {"1": 2, "2": 1})
+    catalog.results = {
+        "beanie": [item(11, "Grey Beanie", 5), item(12, "Black Beanie", 7), item(13, "Red Beanie", 9)],
+        "hoodie": [item(21, "Black Hoodie", 65), item(22, "Grey Hoodie", 60)],
+    }
+
+    slots = await stylist.create_outfit("  emo   skater ")
+
+    assert slots == [
+        {
+            "slot": "Hat",
+            "keyword": "beanie",
+            "items": [
+                {"id": 12, "name": "Black Beanie", "price": 7, "thumbnail_url": "https://tr.fake/12.png",
+                 "roblox_url": "https://www.roblox.com/catalog/12/"},
+            ],
+        },
+        {
+            "slot": "Shirt",
+            "keyword": "hoodie",
+            "items": [
+                {"id": 21, "name": "Black Hoodie", "price": 65, "thumbnail_url": "https://tr.fake/21.png",
+                 "roblox_url": "https://www.roblox.com/catalog/21/"},
+            ],
+        },
+    ]
+    # The last call is the vision call: it targets the vision model and actually sends images.
+    vision_call = fake_llm.calls[-1]
+    assert vision_call["model"] == llm.VISION_MODEL
+    content = vision_call["messages"][1]["content"]
+    image_urls = [part["image_url"]["url"] for part in content if part.get("type") == "image_url"]
+    assert image_urls == [
+        "https://tr.fake/11.png", "https://tr.fake/12.png", "https://tr.fake/13.png",
+        "https://tr.fake/21.png", "https://tr.fake/22.png",
+    ]
+
+
+async def test_create_outfit_falls_back_to_top_candidate_when_vision_fails(fake_llm, catalog):
+    plan = [{"slot": "Hat", "keyword": "beanie"}, {"slot": "Shirt", "keyword": "hoodie"}]
+    fake_llm.respond = answer_vision(plan, "the black one looks best!")  # never JSON -> LLMError
+    catalog.results = {"beanie": [item(11), item(12)], "hoodie": [item(21), item(22)]}
+
+    slots = await stylist.create_outfit("emo")
+
+    assert [(slot["slot"], [entry["id"] for entry in slot["items"]]) for slot in slots] == [
+        ("Hat", [11]),
+        ("Shirt", [21]),
+    ]
+
+
+async def test_create_outfit_caps_total_images(fake_llm, catalog, monkeypatch):
+    monkeypatch.setattr(stylist, "VISION_MAX_IMAGES", 4)
+    plan = [{"slot": "Hat", "keyword": "beanie"}, {"slot": "Shirt", "keyword": "hoodie"}]
+    fake_llm.respond = answer_vision(plan, {"1": 1, "2": 1})
+    catalog.results = {
+        "beanie": [item(i) for i in range(11, 15)],  # 4 candidates
+        "hoodie": [item(i) for i in range(21, 25)],  # 4 candidates
+    }
+
+    slots = await stylist.create_outfit("emo")
+
+    content = fake_llm.calls[-1]["messages"][1]["content"]
+    images = [part for part in content if part.get("type") == "image_url"]
+    assert len(images) == 4  # Hat takes 3, Shirt takes the 1 of the budget that's left
+    assert [slot["slot"] for slot in slots] == ["Hat", "Shirt"]

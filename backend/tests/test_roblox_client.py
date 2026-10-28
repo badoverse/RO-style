@@ -306,3 +306,17 @@ async def test_enrich_survives_a_failing_thumbnail_service(roblox):
 
     assert item["thumbnail_url"] is None
     assert item["price"] == 65
+
+
+async def test_enrich_reuses_asset_prices_from_the_search_but_falls_back_when_unknown(roblox):
+    # Item 1 has a catalog price (reused); item 2 has none (falls back to economy details).
+    roblox.catalog = [asset(1, price=65), asset(2, price=None)]
+    roblox.economy = {1: economy(price=999), 2: economy(price=42)}  # 999 would show if 1 hit economy
+    items = await rc.search_slot("hoodie", "Clothing", "ShirtAccessories")
+    roblox.requests.clear()
+
+    enriched = await rc.enrich_items(items)
+
+    assert {item["id"]: item["price"] for item in enriched} == {1: 65, 2: 42}
+    assert not roblox.requests_to("/v2/assets/1/details")  # catalog price reused, no economy call
+    assert roblox.requests_to("/v2/assets/2/details")  # unknown catalog price -> economy fallback

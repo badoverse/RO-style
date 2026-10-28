@@ -151,6 +151,23 @@ async def test_missing_api_key_is_an_llm_error(monkeypatch):
         await ask()
 
 
+async def test_vision_call_uses_the_vision_model_and_sends_image_parts(fake_llm):
+    fake_llm.replies = ['{"1": 2}']
+    content = [
+        {"type": "text", "text": "pick one per slot"},
+        {"type": "image_url", "image_url": {"url": "https://tr.fake/12.png"}},
+    ]
+
+    result = await llm.complete_json(
+        "system prompt", content, label="vision", cache_key="vkey", model=llm.VISION_MODEL
+    )
+
+    assert result == {"1": 2}
+    [call] = fake_llm.calls
+    assert call["model"] == llm.VISION_MODEL
+    assert call["messages"][1]["content"] == content  # multimodal content passed through unchanged
+
+
 async def test_client_targets_openrouter_with_the_app_headers(monkeypatch):
     monkeypatch.setattr(llm, "_client", None)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
