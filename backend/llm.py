@@ -24,6 +24,12 @@ log = logging.getLogger(__name__)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+# Image-capable free model for the visual "Create outfit" pipeline. It must accept
+# MULTIPLE images per request (several candidate thumbnails arrive in one call). Swap
+# for another free vision id from https://openrouter.ai/api/v1/models whose
+# architecture.input_modalities includes "image" (e.g. "google/gemma-4-31b-it:free")
+# if this one is deprecated.
+VISION_MODEL = "nvidia/nemotron-3.5-super-vl:free"
 # Sent on every call so OpenRouter can attribute (and route) the app's free-tier traffic.
 APP_HEADERS = {"HTTP-Referer": "http://localhost:8000", "X-Title": "Roblox Avatar Stylist"}
 
@@ -55,13 +61,19 @@ class LLMError(Exception):
 
 async def complete_json(
     system: str,
-    user: str,
+    user: str | list,
     *,
     label: str,
     cache_key: Hashable,
     parse: Callable[[Any], Any] = lambda value: value,
+    model: str = MODEL,
+    extra_body: dict | None = EXTRA_BODY,
 ) -> Any:
     """Ask the model for JSON and return parse(decoded reply), cached for 24 hours by cache_key.
+
+    user may be a plain string or a list of OpenAI content parts (text + image_url
+    blocks), which is how the vision model receives candidate thumbnails. model selects
+    the model (MODEL for text, VISION_MODEL for images); extra_body is sent as-is.
 
     parse validates the decoded JSON and raises ValueError when it's unusable; that,
     or a reply that isn't JSON at all, gets one re-ask with a JSON-only system prompt.
@@ -73,20 +85,29 @@ async def complete_json(
         log.info("LLM %s: cache hit", label)
         return cached
     try:
-        result = await asyncio.wait_for(_complete_json(system, user, label, parse), DEADLINE_SECONDS)
+        result = await asyncio.wait_for(
+            _complete_json(system, user, label, parse, model, extra_body), DEADLINE_SECONDS
+        )
     except asyncio.TimeoutError as exc:
         raise LLMError(f"{label}: no usable reply within {DEADLINE_SECONDS:.0f}s") from exc
     _cache.set(cache_key, result)
     return result
 
 
-async def _complete_json(system: str, user: str, label: str, parse: Callable[[Any], Any]) -> Any:
-    reply = await _chat(system, user, label)
+async def _complete_json(
+    system: str,
+    user: str | list,
+    label: str,
+    parse: Callable[[Any], Any],
+    model: str,
+    extra_body: dict | None,
+) -> Any:
+    reply = await _chat(system, user, label, model, extra_body)
     try:
         result = parse(parse_json(reply))
     except ValueError as exc:
         log.warning("LLM %s: unusable reply (%s); asking again for JSON only", label, exc)
-        reply = await _chat(f"{system}\n\n{JSON_ONLY_PROMPT}", user, label)
+        reply = await _chat(f"{system}\n\n{JSON_ONLY_PROMPT}", user, label, model, extra_body)
         try:
             result = parse(parse_json(reply))
         except ValueError as exc:
@@ -120,15 +141,21 @@ async def aclose() -> None:
         _client = None
 
 
-async def _chat(system: str, user: str, label: str) -> str:
-    """One chat completion, tried up to MAX_ATTEMPTS times with exponential backoff."""
+async def _chat(
+    system: str, user: str | list, label: str, model: str = MODEL, extra_body: dict | None = EXTRA_BODY
+) -> str:
+    """One chat completion, tried up to MAX_ATTEMPTS times with exponential backoff.
+
+    user may be a plain string or a list of OpenAI content parts (text + image_url),
+    which is how the vision model is shown candidate thumbnails.
+    """
     client = _get_client()
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     for attempt in range(1, MAX_ATTEMPTS + 1):
         started = time.monotonic()
         retry_after = None
         try:
-            response = await client.chat.completions.create(model=MODEL, messages=messages, extra_body=EXTRA_BODY)
+            response = await client.chat.completions.create(model=model, messages=messages, extra_body=extra_body)
         except _RETRYABLE_ERRORS as exc:
             error: Exception = exc
             if isinstance(exc, openai.APIStatusError):

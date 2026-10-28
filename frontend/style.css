@@ -158,6 +158,35 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.actions button {
+  flex: 1 1 180px;
+}
+
+/* Outlined accent button: more prominent than .secondary, fills on hover. */
+.create {
+  color: var(--accent-strong);
+  font-weight: 600;
+  background: transparent;
+  border-color: var(--accent);
+}
+
+.create:hover:not(:disabled) {
+  color: #0b1020;
+  background: var(--accent);
+}
+
+.actions-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .message {
   margin: 0;
   padding: 10px 12px;

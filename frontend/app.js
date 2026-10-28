@@ -11,6 +11,7 @@ const maxPriceField = $("max-price-field");
 const maxPrice = $("max-price");
 const freeOnly = $("free-only");
 const generateButton = $("generate");
+const createButton = $("create");
 const message = $("message");
 const loading = $("loading");
 const loadingSeconds = $("loading-seconds");
@@ -23,6 +24,13 @@ const copyButton = $("copy-links");
 let links = [];
 let loadingTimer;
 let copyTimer;
+
+// Idle/busy labels for each action button, so loading disables both and only the
+// clicked one shows its progress label.
+const BUTTON_LABELS = new Map([
+  [generateButton, { idle: "Generate outfit", busy: "Generating…" }],
+  [createButton, { idle: "Create outfit", busy: "Creating…" }],
+]);
 
 class HttpError extends Error {
   constructor(status, body) {
@@ -45,7 +53,12 @@ for (const field of [description, maxPrice]) {
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const request = readForm();
-  if (request) generate(request);
+  if (request) generate(request, "/generate", generateButton);
+});
+
+createButton.addEventListener("click", () => {
+  const request = readForm();
+  if (request) generate(request, "/create-outfit", createButton);
 });
 
 copyButton.addEventListener("click", async () => {
@@ -84,14 +97,14 @@ function invalid(field, text) {
   return null;
 }
 
-async function generate(request) {
-  setLoading(true);
+async function generate(request, endpoint, button) {
+  setLoading(true, button);
   results.hidden = true;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let slots;
   try {
-    const response = await fetch("/generate", {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -135,9 +148,11 @@ function friendlyError(error) {
   return "Something went wrong while styling your outfit. Please try again.";
 }
 
-function setLoading(on) {
-  generateButton.disabled = on;
-  generateButton.textContent = on ? "Generating…" : "Generate outfit";
+function setLoading(on, button) {
+  for (const [element, labels] of BUTTON_LABELS) {
+    element.disabled = on;
+    element.textContent = on && element === button ? labels.busy : labels.idle;
+  }
   loading.hidden = !on;
   clearInterval(loadingTimer);
   if (on) {
